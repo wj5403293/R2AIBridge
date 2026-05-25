@@ -12,9 +12,118 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.serialization.json.*
+import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+
+// 定义一个简单的 Prompt 结构
+data class R2Prompt (
+    val name: String,
+    val description: String,
+    val promptText: String
+)
+
+// 预设的"黄金工作流"列表
+val availablePrompts = listOf(
+    R2Prompt(
+        name = "analyze_full",
+        description = "🚀 全自动分析 (Auto Analysis)",
+        promptText = """
+            请对当前文件执行完整的自动化分析流程：
+            1. 运行 `aaa` 进行深度分析。
+            2. 运行 `i` 获取二进制文件基本信息（架构、大小、类型）。
+            3. 运行 `afl` 列出所有识别到的函数。
+            4. 运行 `iz` 列出部分字符串（前10个）。
+            执行完上述命令后，请为我总结这个文件的主要功能和特征。
+        """.trimIndent()
+    ),
+    R2Prompt(
+        name = "check_security",
+        description = "🛡️ 检查安全保护 (Check Security)",
+        promptText = """
+            请检查当前二进制文件的安全加固措施：
+            1. 运行 `i` 查看 permissions 和 canary/nx/pic 等标志位。
+            2. 分析是否开启了 PIE (Position Independent Executable)。
+            3. 检查是否有符号表残留。
+            请以此判断该 App/Library 的逆向难度。
+        """.trimIndent()
+    ),
+    R2Prompt(
+        name = "find_vulnerability",
+        description = "🐛 寻找潜在漏洞 (Find Vulns)",
+        promptText = """
+            请尝试寻找常见的漏洞模式：
+            1. 使用 `/ strcpy` 或 `/ system` 等命令搜索危险函数调用。
+            2. 检查是否有硬编码的敏感字符串 (使用 `iz`)。
+            3. 重点关注 JNI 接口函数 (Java_...)。
+        """.trimIndent()
+    ),
+    R2Prompt(
+        name = "prepare_patch",
+        description = "🔧 准备 Patch 环境 (Setup Patching)",
+        promptText = """
+            我已经准备好修改代码，请帮我做好准备工作：
+            1. 运行 `e io.cache=true` 开启缓存模式（安全防呆）。
+            2. 运行 `oo+` 尝试以读写模式重载文件。
+            3. 检查当前架构 `e asm.arch` 和位宽 `e asm.bits` 是否正确。
+            请确认上述步骤完成后，告诉我“准备就绪，请下达 Patch 指令”。
+        """.trimIndent()
+    ),
+    R2Prompt(
+        name = "smart_rename",
+        description = "🏷️ 智能重命名 (Smart Rename)",
+        promptText = """
+            请对当前函数进行语义分析并重命名：
+            1. 运行 `pdf` 获取当前函数的汇编代码。
+            2. 仔细阅读汇编逻辑，推断该函数的功能（例如：是网络请求？是MD5计算？还是UI点击事件？）。
+            3. 如果你能确定其功能，请立即调用 `rename_function` 将其重命名为更有意义的名字（如 `calc_md5`, `check_license`）。
+            4. 如果无法确定，请保留原名并告诉我分析到了什么。
+        """.trimIndent()
+    ),
+    R2Prompt(
+        name = "emulate_code",
+        description = "🧪 模拟执行 (Emulate)",
+        promptText = """
+            请帮我模拟执行当前函数片段，以分析其计算逻辑：
+            1. 目标：计算当输入参数 x0=1 时，函数的返回值。
+            2. 操作：调用 `simulate_execution`。
+            3. 参数建议：
+               - session_id: 当前会话 ID
+               - address: 当前 seek 地址
+               - steps: 50 (足够跑完一个小逻辑)
+               - init_regs: "x0=1"
+            4. 分析输出的寄存器状态，告诉我最终 x0 是多少。
+        """.trimIndent()
+    ),
+    R2Prompt(
+        name = "decrypt_strings_auto",
+        description = "🔐 自动化解密混淆字符串 (Auto Decrypt Strings)",
+        promptText = """
+            请协助我针对当前目标函数执行批量字符串解密。这是一个针对 OLLVM 混淆或自定义加密函数的自动化流程。
+
+            请严格按照以下步骤操作：
+            1. **环境侦察**：
+               - 运行 `i` 检查当前架构 (ARM64/ARM32/x86)。
+               - 运行 `pdf` 阅读目标函数的汇编代码。
+            
+            2. **参数推断 (至关重要)**：
+               - **指令宽度 (`instr_size`)**：ARM64填4；ARM32填4(Thumb填2)；x86请填平均值(如3)或精确计算。
+               - **结果寄存器 (`result_reg`)**：解密后的字符串指针放在哪里？(ARM通常是 `x0`/`r0`，x86通常是 `eax`/`rax`)。
+               - **传参方式**：
+                 - 如果是寄存器传参 (ARM)，直接进行下一步。
+                 - 如果是栈传参 (x86 `push`)，请构造 `custom_init` 指令来模拟栈数据 (例如 `wv 0x1000 @ esp+4`)。
+            
+            3. **执行模拟**：
+               - 调用 `batch_decrypt_strings` 工具。
+               - 填入你分析出的 `result_reg`, `instr_size` 和 `custom_init`。
+               - 如果函数引用了 `.rodata` 大表，请适当增大 `map_size` (如 `0x100000`)。
+
+            执行完成后，请为我列出解密成功的字符串清单。
+        """.trimIndent()
+    )
+
+)
 
 object MCPServer {
         // --- [新增] Termux 常量与辅助函数 ---
@@ -75,6 +184,9 @@ object MCPServer {
         prettyPrint = true
         coerceInputValues = true
     }
+    
+    // 当前打开的文件路径，用于记忆宫殿功能
+    private var currentFilePath: String = ""
 
     private fun logInfo(msg: String) {
         val timestamp = dateFormat.format(Date())
@@ -239,7 +351,7 @@ object MCPServer {
                     put("version", "1.0")
                     put("status", "running")
                     put("endpoints", JsonArray(listOf(
-                        JsonPrimitive("/messages - Standard MCP endpoint"),
+                        JsonPrimitive("/mcp - Standard MCP endpoint"),
                         JsonPrimitive("/health - Health check")
                     )))
                 }
@@ -251,7 +363,7 @@ object MCPServer {
                 )
             }
 
-            post("/messages") {
+            post("/mcp") {
                 var requestId: JsonElement? = null
                 var method = "unknown"
 
@@ -306,6 +418,204 @@ object MCPServer {
                             val toolLogMsg = "🔧 工具调用: $toolName | $clientIp"
                             onLogEvent(toolLogMsg)
                             handleToolCall(request.params, onLogEvent)
+                        }
+                        "prompts/list" -> {
+                            val promptsJson = JsonArray(availablePrompts.map { prompt ->
+                                buildJsonObject {
+                                    put("name", prompt.name)
+                                    put("description", prompt.description)
+                                    
+                                    // 🛠️【修改点】添加一个"占位参数"，把 UI 激活！
+                                    put("arguments", JsonArray(listOf(
+                                        buildJsonObject {
+                                            put("name", "note") // 参数名
+                                            put("description", "备注 (可选)") // 显示给用户看
+                                            put("required", false) // 设为 false，用户不填也能提交
+                                        }
+                                    )))
+                                }
+                            })
+
+                            val result = buildJsonObject {
+                                put("prompts", promptsJson)
+                            }
+                            result
+                        }
+                        "prompts/get" -> {
+                            try {
+                                // 1. 获取参数
+                                val params = request.params
+                                val promptName = params?.get("name")?.jsonPrimitive?.content
+                                
+                                Log.e("R2AI", "收到 prompts/get 请求: $promptName") // <--- 关键日志 1
+
+                                if (promptName == null) {
+                                    val errorObj = buildJsonObject {
+                                        put("code", -32602)
+                                        put("message", "Missing 'name' parameter")
+                                    }
+                                    val errorResp = buildJsonObject {
+                                        put("jsonrpc", "2.0")
+                                        put("id", request.id ?: JsonNull)
+                                        put("error", errorObj)
+                                    }
+                                    call.respondText(
+                                        text = errorResp.toString(),
+                                        contentType = ContentType.Application.Json,
+                                        status = HttpStatusCode.OK
+                                    )
+                                    return@post
+                                }
+
+                                // 2. 查找对应的 Prompt
+                                val targetPrompt = availablePrompts.find { it.name == promptName }
+
+                                if (targetPrompt != null) {
+                                    Log.e("R2AI", "找到 Prompt，准备发送: ${targetPrompt.description}") // <--- 关键日志 2
+
+                                    // 3. 构建响应
+                                    val result = buildJsonObject {
+                                        put("description", targetPrompt.description)
+                                        put("messages", JsonArray(listOf(
+                                            buildJsonObject {
+                                                put("role", "user")
+                                                put("content", buildJsonObject {
+                                                    put("type", "text")
+                                                    put("text", targetPrompt.promptText)
+                                                })
+                                            }
+                                        )))
+                                    }
+                                    
+                                    // 发送
+                                    Log.e("R2AI", "发送成功") // <--- 关键日志 3
+                                    result
+
+                                } else {
+                                    Log.e("R2AI", "未找到 Prompt: $promptName")
+                                    val errorObj = buildJsonObject {
+                                        put("code", -32602)
+                                        put("message", "Prompt not found: $promptName")
+                                    }
+                                    val errorResp = buildJsonObject {
+                                        put("jsonrpc", "2.0")
+                                        put("id", request.id ?: JsonNull)
+                                        put("error", errorObj)
+                                    }
+                                    call.respondText(
+                                        text = errorResp.toString(),
+                                        contentType = ContentType.Application.Json,
+                                        status = HttpStatusCode.OK
+                                    )
+                                    return@post
+                                }
+
+                            } catch (e: Exception) {
+                                Log.e("R2AI", "prompts/get 发生崩溃", e) // <--- 关键日志 4 (捕获崩溃)
+                                val errorObj = buildJsonObject {
+                                    put("code", -32603)
+                                    put("message", "Internal error: ${e.message}")
+                                }
+                                val errorResp = buildJsonObject {
+                                    put("jsonrpc", "2.0")
+                                    put("id", request.id ?: JsonNull)
+                                    put("error", errorObj)
+                                }
+                                call.respondText(
+                                    text = errorResp.toString(),
+                                    contentType = ContentType.Application.Json,
+                                    status = HttpStatusCode.OK
+                                )
+                                return@post
+                            }
+                        }
+                        "resources/list" -> {
+                            val resources = JsonArray(listOf(
+                                // 1. 文件基础信息
+                                buildJsonObject {
+                                    put("uri", "r2://target-info")
+                                    put("name", "ℹ️ 目标文件情报 (Binary Info)")
+                                    put("description", "二进制文件的基本信息：架构(Arch)、位宽(Bits)、文件类型、编译器信息等。基于 r2 'i' 命令。")
+                                    put("mimeType", "text/plain")
+                                },
+                                // 2. 导入表 (关键依赖)
+                                buildJsonObject {
+                                    put("uri", "r2://imports")
+                                    put("name", "📦 导入函数列表 (Imports)")
+                                    put("description", "目标文件调用的外部函数列表 (libc, JNI, OpenSSL 等)。用于快速判断程序功能。")
+                                    put("mimeType", "text/plain")
+                                },
+                                // 3. 设备环境信息
+                                buildJsonObject {
+                                    put("uri", "r2://device-env")
+                                    put("name", "🖥️ 设备环境信息 (Device Environment)")
+                                    put("description", "当前设备的系统版本、架构、Root 状态等环境信息。不依赖 R2 会话，可随时读取。")
+                                    put("mimeType", "text/plain")
+                                }
+                            ))
+                            
+                            buildJsonObject { put("resources", resources) }
+                        }
+                        
+                        "resources/templates/list" -> {
+                             buildJsonObject { put("resourceTemplates", JsonArray(emptyList())) }
+                        }
+                        
+                        "resources/read" -> {
+                            val uri = request.params?.get("uri")?.jsonPrimitive?.content ?: ""
+                            Log.i(TAG, "📖 读取资源: $uri")
+
+                            // 尝试获取会话，但如果为 null 也不要立即报错
+                            val session = R2SessionManager.getAllSessions().values.lastOrNull()
+
+                            val content = when (uri) {
+                                // case 1: 设备环境 (完全不依赖 session)
+                                "r2://device-env" -> {
+                                    val prop = ShellUtils.execCommand("getprop ro.build.version.release", false).successMsg
+                                    val arch = System.getProperty("os.arch") ?: "unknown"
+                                    val isRoot = ShellUtils.execCommand("id", true).successMsg.contains("uid=0")
+                                    """
+                                    OS: Android $prop
+                                    Arch: $arch
+                                    Rooted: $isRoot
+                                    Termux Dir: $TERMUX_AI_DIR
+                                    """.trimIndent()
+                                }
+
+                                // case 3: 目标信息 (强依赖 session)
+                                "r2://target-info" -> {
+                                    if (session != null) {
+                                        val basicInfo = R2Core.executeCommand(session.corePtr, "i")
+                                        val sections = R2Core.executeCommand(session.corePtr, "iSq")
+                                        "=== Basic Info ===\n$basicInfo\n=== Sections ===\n$sections"
+                                    } else {
+                                        "❌ 错误: 无活动 R2 会话。无法执行 'i' 命令。"
+                                    }
+                                }
+
+                                // case 4: 导入表 (强依赖 session)
+                                "r2://imports" -> {
+                                    if (session != null) {
+                                        val rawImports = R2Core.executeCommand(session.corePtr, "ii")
+                                        sanitizeOutput(rawImports, maxLines = 100)
+                                    } else {
+                                        "❌ 错误: 无活动 R2 会话。无法执行 'ii' 命令。"
+                                    }
+                                }
+
+                                else -> "❌ 未知资源 URI: $uri"
+                            }
+
+                            // 构造响应
+                            buildJsonObject {
+                                put("contents", JsonArray(listOf(
+                                    buildJsonObject {
+                                        put("uri", uri)
+                                        put("mimeType", "text/plain")
+                                        put("text", content)
+                                    }
+                                )))
+                            }
                         }
                         else -> {
                             logError("未知方法", method)
@@ -393,6 +703,7 @@ object MCPServer {
 
     private fun handlePing(): JsonElement {
         logInfo("收到 ping 请求")
+        
         return buildJsonObject {
             put("message", "pong")
             put("timestamp", System.currentTimeMillis())
@@ -423,7 +734,7 @@ object MCPServer {
         val tools = listOf(
             createToolSchema(
                 "r2_open_file",
-                "🚪 [会话管理] 打开二进制文件。默认执行基础分析 (aa) 以快速识别函数。注意：对于大型文件 (>10MB)，强烈建议将 auto_analyze 设为 false 以免超时。如需深度分析，可后续调用 r2_analyze_file 或使用 r2_run_command 执行 'aaa'。",
+                "🚪 [会话管理] 打开二进制文件。默认执行基础分析 (a) 以快速识别函数。注意：对于大型文件 (>10MB)，强烈建议将 auto_analyze 设为 false 以免超时。如需深度分析，可后续调用 r2_analyze_file 或使用 r2_run_command 执行 'aa'。",
                 mapOf(
                     "file_path" to mapOf("type" to "string", "description" to "二进制文件的完整路径"),
                     "session_id" to mapOf("type" to "string", "description" to "可选:使用现有会话 ID,如果不提供则自动创建"),
@@ -647,6 +958,104 @@ object MCPServer {
                 "🧪 [诊断工具] 测试 Radare2 库是否正常工作。",
                 mapOf(),
                 listOf()
+            ),
+            createToolSchema(
+                "read_logcat",
+                "📝[Logcat]读取Android系统日志。用于分析崩溃堆栈、调试 Patch 结果或监控应用行为。",
+                mapOf(
+                    "lines" to mapOf("type" to "integer", "description" to "读取日志的行数 (建议 100-500，默认 200)"),
+                    "filter" to mapOf("type" to "string", "description" to "关键词过滤 (可选，例如 'com.example.app' 或 '致命信号')"),
+                    "use_root" to mapOf("type" to "boolean", "description" to "是否使用 Root 权限读取 (读取其他 App 崩溃必须为 true)")
+                ),
+                listOf()
+            ),
+            createToolSchema(
+                "rename_function",
+                "🏷️[智能重命名函数]当你分析出某个函数的具体用途或函数功能时（例如：加密、登录验证、初始化），请务必调用此工具将其重命名，操作会自动持久化保存到本地知识库。以便在后续分析或重启会话后保留上下文。",
+                mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
+                    "address" to mapOf("type" to "string", "description" to "目标函数地址 (例如 '0x00401000' 或 'sym.main')。留空则默认为当前 seek 的位置。"),
+                    "name" to mapOf("type" to "string", "description" to "新的函数名 (只能包含字母、数字、下划线，例如 'AES_Encrypt')")
+                ),
+                listOf("session_id", "name")
+            ),
+            createToolSchema(
+                "simulate_execution",
+                "🧪[模拟执行]在 ESIL 沙箱中模拟执行代码。用于在不运行 App 的情况下计算函数返回值、解密字符串或分析寄存器变化。",
+                mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
+                    "address" to mapOf("type" to "string", "description" to "开始模拟的地址 (例如 '0x1234')。留空默认当前位置。"),
+                    "steps" to mapOf("type" to "integer", "description" to "执行的指令步数 (建议 10-100)，防止死循环。"),
+                    "init_regs" to mapOf("type" to "string", "description" to "可选：初始化寄存器状态 (例如 'x0=0x1, x1=0x2000')")
+                ),
+                listOf("session_id", "steps")
+            ),
+            createToolSchema(
+                "add_knowledge_note",
+                "📝[添加笔记]向持久化知识库添加笔记。用于记录关键发现（如密钥、算法原理、重要结构体成员）。这些笔记会在下次打开文件时自动加载并展示给你，防止信息丢失。",
+                mapOf(
+                    "address" to mapOf("type" to "string", "description" to "相关地址 (例如 '0x1234')"),
+                    "note" to mapOf("type" to "string", "description" to "笔记内容 (例如 'AES Key 生成函数，返回值是 Key')")
+                ),
+                listOf("address", "note")
+            ),
+            createToolSchema(
+                "batch_decrypt_strings",
+                "🔐 [批量解密] 批量解密字符串，批量模拟执行并提取结果。专为对抗混淆 (OLLVM) 和自定义算法设计。\n" +
+                "核心能力：\n" +
+                "1. 自动定位函数引用点，批量回溯模拟。\n" +
+                "2. 支持所有架构：通过 `instr_size` 和 `result_reg` 适配 ARM64/ARM32/x86。\n" +
+                "3. 解决栈传参：通过 `custom_init` 注入指令 (如 'wv 0x10 @ 0x178004') 手动修补堆栈。\n" +
+                "4. 解决内存布局：通过 `map_size` 扩大内存映射范围。\n" +
+                "注意：仅适用于纯算法函数，无法模拟 malloc/JNI 等外部系统调用。",
+                mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
+                    "func_address" to mapOf("type" to "string", "description" to "目标解密函数的地址 (例如 '0x401000')"),
+                    
+                    // 👇 关键的新增参数
+                    "result_reg" to mapOf("type" to "string", "description" to "存放结果字符串指针的寄存器。ARM64通常是'x0', ARM32是'r0', x86是'eax'。默认为 'x0'。", "default" to "x0"),
+                    
+                    "instr_size" to mapOf("type" to "integer", "description" to "指令平均字节数。用于计算回溯地址。ARM64=4, ARM32=4(或2), x86=变长(可填平均值3)。默认为 4。", "default" to 4),
+                    
+                    "pre_steps" to mapOf("type" to "integer", "description" to "向前回溯的指令条数，用于让 CPU 执行参数准备逻辑。默认为 30。", "default" to 30),
+                    
+                    "map_size" to mapOf("type" to "string", "description" to "模拟器内存映射大小。如果算法引用了远处的数据段，请调大此值。默认为 '0x40000' (256KB)。", "default" to "0x40000"),
+                    
+                    "custom_init" to mapOf("type" to "string", "description" to "【高级插槽】在模拟启动前执行的 R2 命令序列。用于手动初始化栈参数或全局变量。\n示例 (x86栈传参): 'wv 0x1234 @ esp+4; wv 0x5678 @ esp+8'\n示例 (填充全局变量): 'wx 0xff @ 0x80040'", "default" to "")
+                ),
+                listOf("session_id", "func_address")
+            ),
+            createToolSchema(
+                "scan_crypto_signatures",
+                "🔍 [侦察] 扫描二进制文件中的密码学常量（Magic Numbers）。\n" +
+                "用于快速定位加密算法的位置。例如：自动发现 AES S-Box, RSA Keys, MD5/SHA 常量等。\n" +
+                "建议在分析未知的加密函数前先运行此工具。",
+                mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "会话 ID")
+                ),
+                listOf("session_id")
+            ),
+            createToolSchema(
+                "apply_hex_patch",
+                "🔨 [修改指令] 对指定地址应用二进制 Patch (修改指令)。\n" +
+                "用于绕过校验、修改返回值等。例如：将 '1a000034' (CBZ) 修改为 '1f2003d5' (NOP)。\n" +
+                "⚠️ 警告：此操作会直接修改内存/文件。如果不确定，请先使用模拟执行测试。",
+                mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
+                    "address" to mapOf("type" to "string", "description" to "Patch 的起始地址 (例如 '0x00401a00')"),
+                    "hex_bytes" to mapOf("type" to "string", "description" to "要写入的十六进制机器码 (例如 '1f2003d5')。不需要空格。")
+                ),
+                listOf("session_id", "address", "hex_bytes")
+            ),
+            createToolSchema(
+                "find_jni_methods",
+                "🔗 [JNI] 列出所有的 JNI 接口函数。\n" +
+                "这是 Android 逆向的入口点。它会搜索静态导出的 'Java_' 符号以及 'JNI_OnLoad' 函数。\n" +
+                "找到这些函数后，你通常应该从这里开始分析。",
+                mapOf(
+                    "session_id" to mapOf("type" to "string", "description" to "会话 ID")
+                ),
+                listOf("session_id")
             )
         )
         
@@ -744,6 +1153,381 @@ object MCPServer {
                 "sqlite_query" -> executeSqliteQuery(args)
                 "os_list_dir" -> executeOsListDir(args)
                 "os_read_file" -> executeOsReadFile(args)
+                "read_logcat" -> {
+                    try {
+                        val lines = args["lines"]?.jsonPrimitive?.int ?: 200
+                        val filter = args["filter"]?.jsonPrimitive?.content ?: ""
+                        val useRoot = args["use_root"]?.jsonPrimitive?.boolean ?: false
+
+                        // 1. 定义噪音关键词列表 (黑名单)
+                        // 这些 tag 或关键词通常是无用的系统噪音或自身协议日志
+                        val noiseKeywords = listOf(
+                            "R2AI",             // 自身的 Tag
+                            "R2Service",        // 后台服务 Tag
+                            "System.out",       // 自身的 stdout
+                            "MainActivity",     // 自身的 UI 逻辑
+                            "jsonrpc",          // MCP 协议内容
+                            "ViewRootImpl",     // Android UI 渲染噪音
+                            "Oplus",            // 厂商(OPPO/OnePlus) 系统噪音
+                            "InputMethod",      // 输入法噪音
+                            "ImeTracker",       // 输入法追踪
+                            "ResourcesManager"  // 资源加载噪音
+                        )
+
+                        // 2. 构建命令
+                        val command = if (useRoot) {
+                            if (filter.isNotEmpty()) {
+                                "su -c logcat -d -v threadtime -t $lines | grep \"$filter\""
+                            } else {
+                                "su -c logcat -d -v threadtime -t $lines"
+                            }
+                        } else {
+                            "logcat -d -v threadtime -t $lines"
+                        }
+
+                        logInfo("执行 Logcat: $command")
+
+                        // 3. 执行命令
+                        val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
+                        val output = process.inputStream.bufferedReader().use { it.readText() }
+                        process.waitFor()
+
+                        // 4. 执行智能过滤
+                        val filteredOutput = output.lineSequence()
+                            .filter { line ->
+                                // 规则 A: 如果用户指定了 filter，则只保留匹配行
+                                if (!useRoot && filter.isNotEmpty() && !line.contains(filter, ignoreCase = true)) {
+                                    return@filter false
+                                }
+                                
+                                // 规则 B: 始终保留"崩溃"和"严重错误"信息
+                                if (line.contains("FATAL") || 
+                                    line.contains(" crash ") || 
+                                    line.contains("F DEBUG") || // Native Crash 堆栈
+                                    line.contains("E AndroidRuntime")) {
+                                    return@filter true
+                                }
+
+                                // 规则 C: 过滤掉黑名单中的噪音
+                                val isNoise = noiseKeywords.any { noise -> line.contains(noise) }
+                                !isNoise
+                            }
+                            .joinToString("\n")
+
+                        // 5. 结果截断与返回
+                        val finalResult = if (filteredOutput.isBlank()) {
+                            "日志为空 (已过滤噪音)。"
+                        } else if (filteredOutput.length > 50000) {
+                            "...(前略)...\n" + filteredOutput.takeLast(50000)
+                        } else {
+                            filteredOutput
+                        }
+
+                        createToolResult(true, output = finalResult)
+
+                    } catch (e: Exception) {
+                        logError("Logcat 失败", e.message)
+                        createToolResult(false, error = "Logcat 执行失败: ${e.message}")
+                    }
+                }
+                "rename_function" -> {
+                    val rawName = args["name"]?.jsonPrimitive?.content ?: "func_renamed"
+                    val address = args["address"]?.jsonPrimitive?.content ?: ""
+                    val sessionId = args["session_id"]?.jsonPrimitive?.content
+
+                    // 1. 名称清洗 (Sanitization)
+                    val safeName = rawName.trim()
+                        .replace(" ", "_")
+                        .replace(Regex("[^a-zA-Z0-9_.]"), "")
+
+                    if (safeName.isEmpty()) {
+                        createToolResult(false, error = "Invalid function name provided.")
+                    } else if (sessionId == null) {
+                        createToolResult(false, error = "Session ID is required.")
+                    } else {
+                        val session = R2SessionManager.getSession(sessionId)
+                        if (session == null) {
+                            createToolResult(false, error = "No active Radare2 session found. Please open a file first.")
+                        } else {
+                            // 2. 获取当前 Seek 地址 (如果 address 为空)
+                            val targetAddr = if (address.isNotBlank()) address else {
+                                // 如果没传地址，先查一下当前在哪，为了存入 JSON 需要确切地址
+                                val offset = R2Core.executeCommand(session.corePtr, "?v $$").trim() // $$ = current seek
+                                offset
+                            }
+
+                            // 3. 执行 R2 命令
+                            val command = "afn $safeName $targetAddr"
+                            logInfo("执行重命名: $command")
+                            val r2Result = R2Core.executeCommand(session.corePtr, command)
+
+                            // --- 🧠 [新增] 记忆保存逻辑 ---
+                            if (currentFilePath.isNotBlank()) {
+                                saveKnowledge(currentFilePath, "renames", targetAddr, safeName)
+                            }
+
+                            // 4. 验证结果
+                            createToolResult(true, output = "成功将函数重命名为: $safeName\n已存入持久化知识库。\nR2 Output: $r2Result")
+                        }
+                    }
+                }
+                "add_knowledge_note" -> {
+                    val address = args["address"]?.jsonPrimitive?.content ?: ""
+                    val note = args["note"]?.jsonPrimitive?.content ?: ""
+
+                    if (currentFilePath.isNotBlank() && address.isNotBlank() && note.isNotBlank()) {
+                        // 1. 保存到 JSON
+                        saveKnowledge(currentFilePath, "notes", address, note)
+                        
+                        // 2. 可选：同时也作为注释写入 R2 (CC 命令)
+                        // val r2Cmd = "CC $note @ $address"
+                        // R2Core.executeCommand(session.corePtr, r2Cmd)
+
+                        createToolResult(true, output = "笔记已保存到记忆宫殿: [$address] $note")
+                    } else {
+                        createToolResult(false, error = "需要已打开文件、地址和笔记内容。")
+                    }
+                }
+                "simulate_execution" -> {
+                    val address = args["address"]?.jsonPrimitive?.content ?: ""
+                    val steps = args["steps"]?.jsonPrimitive?.int ?: 20
+                    val initRegs = args["init_regs"]?.jsonPrimitive?.content ?: ""
+                    val sessionId = args["session_id"]?.jsonPrimitive?.content
+
+                    if (sessionId == null) {
+                        createToolResult(false, error = "Session ID is required.")
+                    } else {
+                        val session = R2SessionManager.getSession(sessionId)
+                        if (session == null) {
+                            createToolResult(false, error = "No active Radare2 session found. Please open a file first.")
+                        } else {
+                            val sb = StringBuilder()
+
+                            // 1. 初始化 ESIL VM
+                            R2Core.executeCommand(session.corePtr, "aei; aeim")
+
+                            // 2. 跳转到起始位置
+                            if (address.isNotBlank()) {
+                                R2Core.executeCommand(session.corePtr, "s $address")
+                            }
+
+                            // 3. 设置寄存器 (如果有)
+                            if (initRegs.isNotBlank()) {
+                                val regs = initRegs.split(",")
+                                for (reg in regs) {
+                                    val cleanReg = reg.trim()
+                                    if (cleanReg.isNotEmpty()) {
+                                        R2Core.executeCommand(session.corePtr, "aer $cleanReg")
+                                        sb.append("Set $cleanReg\n")
+                                    }
+                                }
+                            }
+
+                            // 4. 开始模拟 (Step N times)
+                            sb.append("Executing $steps steps...\n")
+                            R2Core.executeCommand(session.corePtr, "aes $steps")
+
+                            // 5. 获取结果
+                            val regsOutput = R2Core.executeCommand(session.corePtr, "aer")
+                            
+                            // 🛠️【终极修复】
+                            // sr pc = "Seek to Register PC"
+                            // 这会强制把编辑器光标移动到 ESIL 虚拟机当前的 PC 地址
+                            R2Core.executeCommand(session.corePtr, "sr pc")
+                            
+                            // 然后再反汇编，不需要 @ 了，因为光标已经过去了
+                            val currentOp = R2Core.executeCommand(session.corePtr, "pd 1")
+
+                            sb.append("\n--- Final Registers ---\n")
+                            sb.append(regsOutput)
+                            sb.append("\n--- Stopped At (PC) ---\n")
+                            sb.append(currentOp)
+
+                            createToolResult(true, output = sb.toString())
+                        }
+                    }
+                }
+                "batch_decrypt_strings" -> {
+                    // --- 1. 参数提取与校验 ---
+                    val sessionId = args["session_id"]?.jsonPrimitive?.content
+                        ?: return createToolResult(false, error = "Missing session_id")
+                    val funcAddr = args["func_address"]?.jsonPrimitive?.content
+                        ?: return createToolResult(false, error = "Missing func_address")
+                    
+                    // 默认值配置
+                    val resultReg = args["result_reg"]?.jsonPrimitive?.content ?: "x0"
+                    val instrSize = args["instr_size"]?.jsonPrimitive?.int ?: 4
+                    val maxSteps = 2000
+                    val preSteps = args["pre_steps"]?.jsonPrimitive?.int ?: 30
+                    val mapSize = args["map_size"]?.jsonPrimitive?.content ?: "0x40000"
+                    val customInit = args["custom_init"]?.jsonPrimitive?.content ?: ""
+
+                    val session = R2SessionManager.getSession(sessionId)
+                        ?: return createToolResult(false, error = "Invalid session_id")
+
+                    val sb = StringBuilder("🚀 启动全架构通用模拟: $funcAddr\n")
+
+                    // --- 2. 查找交叉引用 (Xrefs) ---
+                    val xrefsJson = R2Core.executeCommand(session.corePtr, "axtj $funcAddr")
+                    val callSites = mutableListOf<Long>()
+                    try {
+                        val jsonArr = org.json.JSONArray(xrefsJson)
+                        for (i in 0 until jsonArr.length()) {
+                            val item = jsonArr.getJSONObject(i)
+                            if (item.optString("type").lowercase().contains("call")) {
+                                callSites.add(item.getLong("from"))
+                            }
+                        }
+                    } catch (e: Exception) { }
+
+                    if (callSites.isEmpty()) return createToolResult(true, output = "⚠️ 未发现调用点。请检查地址是否正确。")
+
+                    sb.append("🔍 发现 ${callSites.size} 处调用，准备模拟...\n")
+                    var successCount = 0
+
+                    // --- 3. 批量模拟循环 ---
+                    for (callSite in callSites) {
+                        val callSiteHex = "0x%x".format(callSite)
+                        // 计算回溯起点
+                        val startPC = callSite - (preSteps * instrSize)
+
+                        // A. 重置映射 & 动态分配内存
+                        R2Core.executeCommand(session.corePtr, "om -") // 清空
+                        R2Core.executeCommand(session.corePtr, "omf 0 $mapSize") // 动态大小映射
+                        
+                        // B. 计算安全的栈顶地址 (Stack Pointer)
+                        // 逻辑：栈顶 = 映射大小 - 0x100 (保留一点 buffer 防止溢出)
+                        val mapSizeBytes = try {
+                            if (mapSize.startsWith("0x")) mapSize.substring(2).toLong(16)
+                            else mapSize.toLong()
+                        } catch (e: Exception) { 0x40000L }
+                        
+                        val safeStackAddr = mapSizeBytes - 0x100
+                        val safeStackHex = "0x%x".format(safeStackAddr)
+
+                        // C. 初始化 ESIL 虚拟机
+                        R2Core.executeCommand(session.corePtr, "e esil.romem=true")
+                        R2Core.executeCommand(session.corePtr, "aei; aeim")
+                        
+                        // D. 初始化通用寄存器 (覆盖 ARM64, ARM32, x86, x64)
+                        // 将 SP/BP 都指向我们计算出的安全内存高位，防止 push/pop 崩溃
+                        val initStackCmd = "aer x29=$safeStackHex; aer sp=$safeStackHex; " +
+                                           "aer rbp=$safeStackHex; aer esp=$safeStackHex; " +
+                                           "aer r7=$safeStackHex" // ARM32 Thumb Frame Pointer
+                        R2Core.executeCommand(session.corePtr, initStackCmd)
+
+                        // E. 【高阶】执行 AI 自定义的特殊初始化 (例如写栈参数)
+                        if (customInit.isNotBlank()) {
+                            R2Core.executeCommand(session.corePtr, customInit)
+                        }
+
+                        // F. 执行参数准备阶段 (Pre-run)
+                        R2Core.executeCommand(session.corePtr, "aer pc=$startPC")
+                        R2Core.executeCommand(session.corePtr, "aecu $callSite")
+                        
+                        // G. 跳过 Call 指令本身，模拟函数内部
+                        // 设置 LR/Ret 地址为 0xffffff (陷阱)，模拟函数执行完返回
+                        R2Core.executeCommand(session.corePtr, "aer lr=0xffffff; aer rax=0xffffff")
+                        R2Core.executeCommand(session.corePtr, "aer pc=$funcAddr")
+                        
+                        // H. 正式模拟 (Run)
+                        R2Core.executeCommand(session.corePtr, "aes $maxSteps")
+
+                        // I. 提取结果 (通用寄存器)
+                        val retValStr = R2Core.executeCommand(session.corePtr, "aer $resultReg").trim()
+                        val resultString = R2Core.executeCommand(session.corePtr, "ps @ $retValStr").trim()
+
+                        // J. 结果验证与保存
+                        if (resultString.isNotBlank() && resultString.length > 1 && resultString.all { it.code in 32..126 }) {
+                            sb.append("✅ $callSiteHex -> \"$resultString\"\n")
+                            if (currentFilePath.isNotBlank()) {
+                                saveKnowledge(currentFilePath, "notes", callSiteHex, "Decrypted: \"$resultString\"")
+                                R2Core.executeCommand(session.corePtr, "CC Decrypted: \"$resultString\" @ $callSite")
+                            }
+                            successCount++
+                        }
+                    }
+                    
+                    sb.append("\n📊 统计: 成功 $successCount / ${callSites.size}\n")
+                    createToolResult(true, output = sb.toString())
+                }
+                "scan_crypto_signatures" -> {
+                    val sessionId = args["session_id"]?.jsonPrimitive?.content
+                        ?: return createToolResult(false, error = "Missing session_id")
+                    val session = R2SessionManager.getSession(sessionId)
+                        ?: return createToolResult(false, error = "Invalid session_id")
+
+                    logInfo("正在扫描密码学特征...")
+                    
+                    // /ca = Search for crypto constants (AES, RSA, SHA...) in all sections
+                    // search.in=io.maps 确保扫描所有映射的内存
+                    R2Core.executeCommand(session.corePtr, "e search.in=io.maps")
+                    val rawOutput = R2Core.executeCommand(session.corePtr, "/ca")
+                    
+                    if (rawOutput.isBlank()) {
+                        createToolResult(true, output = "未发现明显的密码学常量特征。")
+                    } else {
+                        // 简单的格式化，去掉太长的杂音
+                        val formatted = rawOutput.lineSequence()
+                            .take(50) // 只取前50个，防止太多
+                            .joinToString("\n")
+                        createToolResult(true, output = "🔍 发现以下密码学特征:\n$formatted\n\n💡 提示：请根据地址跳转分析引用 (axt)。")
+                    }
+                }
+                "apply_hex_patch" -> {
+                    val sessionId = args["session_id"]?.jsonPrimitive?.content ?: return createToolResult(false, error = "Missing session_id")
+                    val address = args["address"]?.jsonPrimitive?.content ?: return createToolResult(false, error = "Missing address")
+                    val hexBytes = args["hex_bytes"]?.jsonPrimitive?.content ?: return createToolResult(false, error = "Missing bytes")
+
+                    val session = R2SessionManager.getSession(sessionId) ?: return createToolResult(false, error = "Invalid session_id")
+
+                    // 1. 尝试开启写模式 (oo+)
+                    R2Core.executeCommand(session.corePtr, "oo+")
+                    
+                    // 2. 备份原有字节 (为了显示给用户看)
+                    val len = hexBytes.length / 2
+                    val originalBytes = R2Core.executeCommand(session.corePtr, "p8 $len @ $address").trim()
+                    
+                    // 3. 写入新字节
+                    // wx = Write heX
+                    R2Core.executeCommand(session.corePtr, "wx $hexBytes @ $address")
+                    
+                    // 4. 验证是否写入成功
+                    val newBytes = R2Core.executeCommand(session.corePtr, "p8 $len @ $address").trim()
+                    
+                    // 5. 刷新反汇编预览
+                    val preview = R2Core.executeCommand(session.corePtr, "pd 1 @ $address")
+
+                    if (newBytes.equals(hexBytes, ignoreCase = true)) {
+                        createToolResult(true, output = "✅ Patch 成功！\n📍 地址: $address\n🔴 原字节: $originalBytes\n🟢 新字节: $newBytes\n\n🔍 当前指令预览:\n$preview")
+                    } else {
+                        createToolResult(false, error = "❌ Patch 失败。可能没有写权限，或者文件只读。\n当前字节仍为: $newBytes")
+                    }
+                }
+                "find_jni_methods" -> {
+                    val sessionId = args["session_id"]?.jsonPrimitive?.content ?: return createToolResult(false, error = "Missing session_id")
+                    val session = R2SessionManager.getSession(sessionId) ?: return createToolResult(false, error = "Invalid session_id")
+
+                    // is~Java_ : 列出符号(symbols)中包含 "Java_" 的 
+                    // is~JNI_OnLoad : 列出 JNI_OnLoad 
+                    val javaFuncs = R2Core.executeCommand(session.corePtr, "is~Java_").trim()
+                    val onLoad = R2Core.executeCommand(session.corePtr, "is~JNI_OnLoad").trim()
+                    
+                    val sb = StringBuilder() 
+                    if (onLoad.isNotBlank()) {
+                        sb.append("⚡ 发现动态注册入口 (JNI_OnLoad):\n$onLoad\n\n")
+                    } else {
+                        sb.append("ℹ️ 未发现 JNI_OnLoad (可能是静态注册或被混淆)\n\n")
+                    }
+                    
+                    if (javaFuncs.isNotBlank()) {
+                        sb.append("☕ 发现静态 JNI 函数:\n$javaFuncs")
+                    } else {
+                        sb.append("⚠️ 未发现静态导出的 'Java_' 函数。请检查是否被 Strip 或使用了动态注册。")
+                    }
+                    
+                    createToolResult(true, output = sb.toString())
+                }
                 else -> createToolResult(false, error = "Unknown tool: $toolName")
             }
             fixContentFormat(result)
@@ -883,10 +1667,18 @@ object MCPServer {
             }
         }
 
+        // --- 🧠 [新增] 记忆加载逻辑 ---
+        val memory = loadKnowledge(filePath)
+        
+        // 执行恢复命令 (重命名)
+        for (cmd in memory.r2Commands) {
+            R2Core.executeCommand(session!!.corePtr, cmd)
+        }
+        
         val analysisResult = if (autoAnalyze) {
-            logInfo("执行基础分析 (aa)...")
+            logInfo("执行基础分析 (a)...")
             val startTime = System.currentTimeMillis()
-            val output = R2Core.executeCommand(session!!.corePtr, "aa")
+            val output = R2Core.executeCommand(session!!.corePtr, "a")
             val duration = System.currentTimeMillis() - startTime
             logInfo("分析完成，耗时 ${duration}ms")
             "\n[基础分析已完成，耗时 ${duration}ms]\n$output"
@@ -896,7 +1688,10 @@ object MCPServer {
 
         val info = R2Core.executeCommand(session!!.corePtr, "i")
         
-        return createToolResult(true, output = "Session: $sessionId\n\nFile: ${file.absolutePath}$analysisResult\n\n=== 文件信息 ===\n$info")
+        // 记录当前文件路径，供保存时使用
+        currentFilePath = filePath
+        
+        return createToolResult(true, output = "Session: $sessionId\n\nFile: ${file.absolutePath}$analysisResult\n\n${memory.summary}\n=== 文件信息 ===\n$info")
     }
 
     private suspend fun executeOpenFileWithFile(file: java.io.File, filePath: String, autoAnalyze: Boolean, onLogEvent: (String) -> Unit): JsonElement {
@@ -925,10 +1720,18 @@ object MCPServer {
             logInfo("使用现有会话: $sessionId")
         }
 
+        // --- 🧠 [新增] 记忆加载逻辑 ---
+        val memory = loadKnowledge(filePath)
+        
+        // 执行恢复命令 (重命名)
+        for (cmd in memory.r2Commands) {
+            R2Core.executeCommand(session!!.corePtr, cmd)
+        }
+        
         val analysisResult = if (autoAnalyze) {
-            logInfo("执行基础分析 (aa)...")
+            logInfo("执行基础分析 (a)...")
             val startTime = System.currentTimeMillis()
-            val output = R2Core.executeCommand(session!!.corePtr, "aa")
+            val output = R2Core.executeCommand(session!!.corePtr, "a")
             val duration = System.currentTimeMillis() - startTime
             logInfo("分析完成，耗时 ${duration}ms")
             "\n[基础分析已完成，耗时 ${duration}ms]\n$output"
@@ -938,7 +1741,10 @@ object MCPServer {
 
         val info = R2Core.executeCommand(session!!.corePtr, "i")
         
-        return createToolResult(true, output = "Session: $sessionId\n\nFile: ${file.absolutePath}$analysisResult\n\n=== 文件信息 ===\n$info")
+        // 记录当前文件路径，供保存时使用
+        currentFilePath = filePath
+        
+        return createToolResult(true, output = "Session: $sessionId\n\nFile: ${file.absolutePath}$analysisResult\n\n${memory.summary}\n=== 文件信息 ===\n$info")
     }
 
     private suspend fun executeAnalyzeFile(args: JsonObject, onLogEvent: (String) -> Unit): JsonElement {
@@ -1739,5 +2545,84 @@ object MCPServer {
         } else {
             createToolResult(false, error = "保存失败:\n${result.errorMsg}")
         }
+    }
+
+    // --- 🧠 记忆宫殿辅助函数 (Internal Storage Ver.) ---
+
+    // 使用 App 的私有目录。建议加一级子目录 'knowledge' 保持整洁
+    // 如果您在 Service/Activity 中有 Context，也可以用 context.filesDir.absolutePath + "/knowledge"
+    val KNOWLEDGE_BASE_DIR = "/data/data/com.r2aibridge/files/knowledge"
+
+    // 获取知识库文件对象
+    fun getKnowledgeFile(targetPath: String): File {
+        // 使用目标文件的哈希或文件名作为 JSON 文件名
+        // 为了防止路径中的 "/" 搞乱文件名，这里简单处理：把 "/" 替换为 "_"
+        // 例如: /system/lib/libc.so -> _system_lib_libc.so.json
+        val safeName = targetPath.replace("/", "_") + ".json"
+        
+        val dir = File(KNOWLEDGE_BASE_DIR)
+        if (!dir.exists()) {
+            // 创建目录 (不需要 root，因为是在自己的沙箱里)
+            dir.mkdirs()
+        }
+        return File(dir, safeName)
+    }
+
+    // 保存知识 (保持不变)
+    fun saveKnowledge(targetPath: String, type: String, address: String, content: String) {
+        try {
+            val file = getKnowledgeFile(targetPath)
+            val json = if (file.exists()) JSONObject(file.readText()) else JSONObject()
+            
+            if (!json.has(type)) json.put(type, JSONObject())
+            
+            json.getJSONObject(type).put(address, content)
+            
+            file.writeText(json.toString(2))
+            Log.i("R2AI", "Memory saved to internal storage: $type[$address]")
+        } catch (e: Exception) {
+            Log.e("R2AI", "Failed to save knowledge", e)
+        }
+    }
+
+    // 加载知识 (保持不变)
+    data class KnowledgeRestore(val r2Commands: List<String>, val summary: String)
+
+    fun loadKnowledge(targetPath: String): KnowledgeRestore {
+        val file = getKnowledgeFile(targetPath)
+        if (!file.exists()) return KnowledgeRestore(emptyList(), "无历史知识库 (新文件)。")
+
+        val commands = mutableListOf<String>()
+        val summaryBuilder = StringBuilder("📚 已从知识库恢复：\n")
+        
+        try {
+            val json = JSONObject(file.readText())
+            
+            if (json.has("renames")) {
+                val renames = json.getJSONObject("renames")
+                var count = 0
+                renames.keys().forEach { addr ->
+                    val name = renames.getString(addr)
+                    commands.add("afn $name $addr")
+                    count++
+                }
+                summaryBuilder.append("- $count 个函数重命名\n")
+            }
+            
+            if (json.has("notes")) {
+                val notes = json.getJSONObject("notes")
+                var count = 0
+                notes.keys().forEach { addr ->
+                    val note = notes.getString(addr)
+                    summaryBuilder.append("- 笔记 @ $addr: $note\n")
+                    count++
+                }
+            }
+            
+        } catch (e: Exception) {
+            return KnowledgeRestore(emptyList(), "读取知识库失败: ${e.message}")
+        }
+        
+        return KnowledgeRestore(commands, summaryBuilder.toString())
     }
 }
