@@ -237,17 +237,33 @@ class MainActivity : ComponentActivity() {
             @Suppress("DEPRECATION")
             val ipInt = wifiInfo.ipAddress
             
-            if (ipInt == 0) {
-                return "未连接WiFi"
+            if (ipInt != 0) {
+                return String.format(
+                    "%d.%d.%d.%d",
+                    ipInt and 0xff,
+                    ipInt shr 8 and 0xff,
+                    ipInt shr 16 and 0xff,
+                    ipInt shr 24 and 0xff
+                )
             }
             
-            return String.format(
-                "%d.%d.%d.%d",
-                ipInt and 0xff,
-                ipInt shr 8 and 0xff,
-                ipInt shr 16 and 0xff,
-                ipInt shr 24 and 0xff
-            )
+            // Fallback: 遍历网络接口查找 WiFi 地址
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                val name = networkInterface.name ?: continue
+                // WiFi 接口通常叫 wlan0 或包含 wlan
+                if (!name.contains("wlan", ignoreCase = true)) continue
+                val addresses = networkInterface.inetAddresses
+                while (addresses.hasMoreElements()) {
+                    val address = addresses.nextElement()
+                    if (address is Inet4Address && !address.isLoopbackAddress) {
+                        return address.hostAddress ?: "未连接WiFi"
+                    }
+                }
+            }
+            
+            return "未连接WiFi"
         } catch (e: Exception) {
             return "未连接WiFi"
         }
