@@ -136,7 +136,7 @@ object R2AIConfig {
 
     // 编译期默认值（仅作为后备，实际值从 SharedPreferences 读取）
     private const val DEFAULT_MAX_LINES = 800
-    private const val DEFAULT_MAX_CHARS = 24000
+    private const val DEFAULT_MAX_CHARS = 32000
 
     private lateinit var prefs: android.content.SharedPreferences
 
@@ -161,11 +161,11 @@ object R2AIConfig {
     }
 
     fun setMaxLines(lines: Int) {
-        prefs.edit().putInt(KEY_MAX_LINES, lines.coerceIn(50, 10000)).apply()
+        prefs.edit().putInt(KEY_MAX_LINES, lines.coerceIn(200, 50000)).apply()
     }
 
     fun setMaxChars(chars: Int) {
-        prefs.edit().putInt(KEY_MAX_CHARS, chars.coerceIn(40000, 500000)).apply()
+        prefs.edit().putInt(KEY_MAX_CHARS, chars.coerceIn(12000, 500000)).apply()
     }
 }
 
