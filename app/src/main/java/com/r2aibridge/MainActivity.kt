@@ -20,6 +20,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -34,12 +35,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.r2aibridge.mcp.MCPServer
+import com.r2aibridge.mcp.R2AIConfig
 import com.r2aibridge.service.R2ServiceForeground
 import com.r2aibridge.ui.theme.R2AIBridgeTheme
 import java.net.Inet4Address
@@ -112,7 +115,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
+        // 初始化全局配置
+        R2AIConfig.init(this)
+
         // 🔥 智能加载 Radare2 库（热插拔支持）
         try {
             R2Core.loadLibraries(this)
@@ -284,6 +290,7 @@ fun MainScreen(
     val logListState = rememberLazyListState()
     val context = LocalContext.current
     val view = LocalView.current
+    val focusManager = LocalFocusManager.current
 
     /**
      * 启动持续的 R2AI 日志监听
@@ -372,12 +379,18 @@ fun MainScreen(
     val localhostUrl = "http://127.0.0.1:5050/mcp"
     val wifiUrl = if (wifiIp != "未连接WiFi") "http://$wifiIp:5050/mcp" else null
 
+    // 点击空白处清除焦点
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(16.dp),
+            .padding(16.dp)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = { focusManager.clearFocus() }
+            ),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         // Title
@@ -535,6 +548,71 @@ fun MainScreen(
                 )
             ) {
                 Text("停止服务")
+            }
+        }
+
+        // 输出配置卡片
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp)
+            ) {
+                Text(
+                    text = "输出配置",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Text(
+                    text = "⚠️超过5万字符将显著增加Token消耗，耗尽上下文无法继续对话。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                var maxLinesText by remember { mutableStateOf(R2AIConfig.getMaxLines().toString()) }
+                var maxCharsText by remember { mutableStateOf(R2AIConfig.getMaxChars().toString()) }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = maxLinesText,
+                        onValueChange = { maxLinesText = it.filter { c -> c.isDigit() } },
+                        label = { Text("最大行数") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = maxCharsText,
+                        onValueChange = { maxCharsText = it.filter { c -> c.isDigit() } },
+                        label = { Text("最大字符数") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = {
+                        val lines = maxLinesText.toIntOrNull() ?: 800
+                        val chars = maxCharsText.toIntOrNull() ?: 24000
+                        R2AIConfig.setMaxLines(lines)
+                        R2AIConfig.setMaxChars(chars)
+                        // 清除焦点并隐藏键盘
+                        focusManager.clearFocus()
+                        val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                        imm.hideSoftInputFromWindow(view.windowToken, 0)
+                        Toast.makeText(context, "已保存 (行数: $lines, 字符数: $chars)", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("保存配置")
+                }
             }
         }
 

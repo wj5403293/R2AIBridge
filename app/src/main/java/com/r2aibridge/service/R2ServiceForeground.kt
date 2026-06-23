@@ -15,6 +15,7 @@ import android.view.View
 import androidx.core.app.NotificationCompat
 import com.r2aibridge.R
 import com.r2aibridge.mcp.MCPServer
+import com.r2aibridge.mcp.R2AIConfig
 import io.ktor.server.engine.*
 import io.ktor.server.cio.*
 import kotlinx.coroutines.*
@@ -41,6 +42,7 @@ class R2ServiceForeground : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        R2AIConfig.init(this)
         createNotificationChannel()
         startForeground(NOTIFICATION_ID, createNotification())
         initFloatingWindow()

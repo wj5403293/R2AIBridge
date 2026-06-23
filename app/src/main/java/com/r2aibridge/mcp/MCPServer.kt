@@ -125,6 +125,50 @@ val availablePrompts = listOf(
 
 )
 
+/**
+ * R2AI 全局配置管理
+ * 使用 SharedPreferences 存储用户配置的输出限制参数
+ */
+object R2AIConfig {
+    private const val PREFS_NAME = "r2ai_config"
+    private const val KEY_MAX_LINES = "max_lines"
+    private const val KEY_MAX_CHARS = "max_chars"
+
+    // 编译期默认值（仅作为后备，实际值从 SharedPreferences 读取）
+    private const val DEFAULT_MAX_LINES = 800
+    private const val DEFAULT_MAX_CHARS = 24000
+
+    private lateinit var prefs: android.content.SharedPreferences
+
+    fun init(context: android.content.Context) {
+        prefs = context.getSharedPreferences(PREFS_NAME, android.content.Context.MODE_PRIVATE)
+    }
+
+    fun getMaxLines(): Int {
+        return try {
+            prefs.getInt(KEY_MAX_LINES, DEFAULT_MAX_LINES)
+        } catch (e: Exception) {
+            DEFAULT_MAX_LINES
+        }
+    }
+
+    fun getMaxChars(): Int {
+        return try {
+            prefs.getInt(KEY_MAX_CHARS, DEFAULT_MAX_CHARS)
+        } catch (e: Exception) {
+            DEFAULT_MAX_CHARS
+        }
+    }
+
+    fun setMaxLines(lines: Int) {
+        prefs.edit().putInt(KEY_MAX_LINES, lines.coerceIn(50, 10000)).apply()
+    }
+
+    fun setMaxChars(chars: Int) {
+        prefs.edit().putInt(KEY_MAX_CHARS, chars.coerceIn(40000, 500000)).apply()
+    }
+}
+
 object MCPServer {
         // --- [新增] Termux 常量与辅助函数 ---
         // AI 脚本沙盒路径
@@ -206,41 +250,55 @@ object MCPServer {
      * 清洗和截断 Radare2 的输出，防止 AI 崩溃
      */
     private fun sanitizeOutput(
-        raw: String, 
-        maxLines: Int = 500, 
-        maxChars: Int = 16000,
+        raw: String,
+        maxLines: Int,
+        maxChars: Int,
         filterGarbage: Boolean = false
     ): String {
         if (raw.isBlank()) return "(Empty Output)"
 
         var output = raw
-        
+
         // 1. 过滤垃圾段 (如 .eh_frame, .text 中的乱码)
         if (filterGarbage) {
             output = output.lineSequence()
                 .filter { line ->
-                    !line.contains(".eh_frame") && 
+                    !line.contains(".eh_frame") &&
                     !line.contains(".gcc_except_table") &&
                     !line.contains("libunwind")
                 }
                 .joinToString("\n")
         }
-        
-        // 2. 字符数截断
+
+        // 2. 行数截断（先截断行，保留完整语义）
+        val lines = output.lines()
+        if (lines.size > maxLines) {
+            logInfo("输出超过 $maxLines 行 (共 ${lines.size} 行)，已截断")
+            output = lines.take(maxLines).joinToString("\n")
+        }
+
+        // 3. 字符数截断（后截断字符，作为兜底保护）
         if (output.length > maxChars) {
             logInfo("输出超过 $maxChars 字符，已截断")
             return output.take(maxChars) + "\n\n[⛔ SYSTEM: 输出超过 $maxChars 字符，已强制截断。请缩小分析范围。]"
         }
-        
-        // 3. 行数截断
-        val lines = output.lines()
-        if (lines.size > maxLines) {
-            logInfo("输出超过 $maxLines 行 (共 ${lines.size} 行)，已截断")
-            return lines.take(maxLines).joinToString("\n") + 
-                   "\n\n[⛔ SYSTEM: 输出超过 $maxLines 行 (共 ${lines.size} 行)，已截断。请使用过滤参数缩小范围。]"
-        }
 
         return output
+    }
+
+    /**
+     * 使用全局配置的 sanitizeOutput 重载
+     */
+    private fun sanitizeOutput(
+        raw: String,
+        filterGarbage: Boolean = false
+    ): String {
+        return sanitizeOutput(
+            raw,
+            maxLines = R2AIConfig.getMaxLines(),
+            maxChars = R2AIConfig.getMaxChars(),
+            filterGarbage = filterGarbage
+        )
     }
 
     /**
@@ -597,7 +655,7 @@ object MCPServer {
                                 "r2://imports" -> {
                                     if (session != null) {
                                         val rawImports = R2Core.executeCommand(session.corePtr, "ii")
-                                        sanitizeOutput(rawImports, maxLines = 100)
+                                        sanitizeOutput(rawImports, maxLines = 100, maxChars = 8000)
                                     } else {
                                         "❌ 错误: 无活动 R2 会话。无法执行 'ii' 命令。"
                                     }
@@ -756,7 +814,9 @@ object MCPServer {
                 "⚙️ [通用命令] 在指定会话中执行任意 Radare2 命令。支持所有 r2 命令。",
                 mapOf(
                     "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
-                    "command" to mapOf("type" to "string", "description" to "Radare2 命令")
+                    "command" to mapOf("type" to "string", "description" to "Radare2 命令"),
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数（默认 1000）", "default" to 1000),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数（默认 20000）", "default" to 20000)
                 ),
                 listOf("session_id", "command")
             ),
@@ -766,7 +826,8 @@ object MCPServer {
                 mapOf(
                     "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
                     "filter" to mapOf("type" to "string", "description" to "可选:函数名过滤器（如 'sym.Java' 只显示 Java 相关函数）", "default" to ""),
-                    "limit" to mapOf("type" to "integer", "description" to "最大返回数量（默认 500）", "default" to 500)
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数（默认 500）", "default" to 500),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数（默认 16000）", "default" to 16000)
                 ),
                 listOf("session_id")
             ),
@@ -776,7 +837,9 @@ object MCPServer {
                 mapOf(
                     "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
                     "mode" to mapOf("type" to "string", "description" to "搜索模式: 'data' (iz) 或 'all' (izz)", "default" to "data"),
-                    "min_length" to mapOf("type" to "integer", "description" to "最小字符串长度（默认 5，在 R2 核心层过滤）", "default" to 5)
+                    "min_length" to mapOf("type" to "integer", "description" to "最小字符串长度（默认 5，在 R2 核心层过滤）", "default" to 5),
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数（默认 500）", "default" to 500),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数（默认 16000）", "default" to 16000)
                 ),
                 listOf("session_id")
             ),
@@ -787,7 +850,8 @@ object MCPServer {
                     "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
                     "address" to mapOf("type" to "string", "description" to "目标地址或函数名"),
                     "direction" to mapOf("type" to "string", "description" to "方向: 'to' (默认) 或 'from'", "default" to "to"),
-                    "limit" to mapOf("type" to "integer", "description" to "最大返回数量（默认 50）", "default" to 50)
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数（默认 50）", "default" to 50),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数（默认 8000）", "default" to 8000)
                 ),
                 listOf("session_id", "address")
             ),
@@ -805,7 +869,9 @@ object MCPServer {
                 "🔍 [代码分析] 反编译指定地址的函数为伪代码。使用 'pdc' 命令，将汇编代码转换为类 C 语言的可读代码。",
                 mapOf(
                     "session_id" to mapOf("type" to "string", "description" to "会话 ID"),
-                    "address" to mapOf("type" to "string", "description" to "函数地址（十六进制格式，如：0x401000 或 main）")
+                    "address" to mapOf("type" to "string", "description" to "函数地址（十六进制格式，如：0x401000 或 main）"),
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数", "default" to 500),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数", "default" to 15000)
                 ),
                 listOf("session_id", "address")
             ),
@@ -929,7 +995,9 @@ object MCPServer {
                 "- use_root=true: 仅在需要读取系统数据库时开启。",
                 mapOf(
                     "command" to mapOf("type" to "string", "description" to "Shell 命令"),
-                    "use_root" to mapOf("type" to "boolean", "description" to "是否提权", "default" to false)
+                    "use_root" to mapOf("type" to "boolean", "description" to "是否提权", "default" to false),
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数（默认 1000）", "default" to 1000),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数（默认 16000）", "default" to 16000)
                 ), 
                 listOf("command")
             ),
@@ -949,7 +1017,9 @@ object MCPServer {
                 "🗄️ [数据库] 使用系统内置 sqlite3 工具执行 SQL 查询。支持 Root 权限，可直接读取 /data/data 下的私有数据库。请务必使用 LIMIT 限制返回行数，防止输出过大。",
                 mapOf(
                     "db_path" to mapOf("type" to "string", "description" to "数据库文件的绝对路径 (如 /data/data/com.xxx/databases/msg.db)"),
-                    "query" to mapOf("type" to "string", "description" to "要执行的 SQL 语句 (如 'SELECT * FROM user LIMIT 10;')")
+                    "query" to mapOf("type" to "string", "description" to "要执行的 SQL 语句 (如 'SELECT * FROM user LIMIT 10;')"),
+                    "max_lines" to mapOf("type" to "integer", "description" to "最大输出行数（默认 1000）", "default" to 1000),
+                    "max_chars" to mapOf("type" to "integer", "description" to "最大输出字符数（默认 32000）", "default" to 32000)
                 ),
                 listOf("db_path", "query")
             ),
@@ -1920,40 +1990,45 @@ object MCPServer {
         val command = args["command"]?.jsonPrimitive?.content
             ?: return createToolResult(false, error = "Missing command")
 
+        val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+        val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
+
         val session = R2SessionManager.getSession(sessionId)
             ?: return createToolResult(false, error = "Invalid session_id: $sessionId")
 
         logInfo("执行命令: $command (Session: ${sessionId.take(16)})")
-        
+
         val rawResult = R2Core.executeCommand(session.corePtr, command)
-        
-        val result = sanitizeOutput(rawResult, maxLines = 1000, maxChars = 20000)
-        
+
+        val result = sanitizeOutput(rawResult, maxLines = maxLines, maxChars = maxChars)
+
         if (result.length > 200) {
             logInfo("命令返回: ${result.length} bytes")
         }
-        
+
         return createToolResult(true, output = result)
     }
 
     private suspend fun executeListFunctions(args: JsonObject): JsonElement {
         val sessionId = args["session_id"]?.jsonPrimitive?.content
             ?: return createToolResult(false, error = "Missing session_id")
-        
+
         val filter = args["filter"]?.jsonPrimitive?.content ?: ""
-        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 500
+        // 兼容旧 limit 参数，同时支持新的 max_lines 和 max_chars，优先使用全局配置
+        val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: args["limit"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+        val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
 
         val session = R2SessionManager.getSession(sessionId)
             ?: return createToolResult(false, error = "Invalid session_id: $sessionId")
 
         val command = if (filter.isBlank()) "afl" else "afl~$filter"
-        
-        logInfo("列出函数 (过滤: '$filter', 限制: $limit, Session: ${sessionId.take(16)})")
-        
+
+        logInfo("列出函数 (过滤: '$filter', 限制: $maxLines, Session: ${sessionId.take(16)})")
+
         val rawResult = R2Core.executeCommand(session.corePtr, command)
-        
-        val result = sanitizeOutput(rawResult, maxLines = limit, maxChars = 16000)
-        
+
+        val result = sanitizeOutput(rawResult, maxLines = maxLines, maxChars = maxChars)
+
         return createToolResult(true, output = result)
     }
     
@@ -1963,7 +2038,9 @@ object MCPServer {
 
         val mode = args["mode"]?.jsonPrimitive?.content ?: "data"
         val minLength = args["min_length"]?.jsonPrimitive?.intOrNull ?: 5
-        
+        val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+        val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
+
         val session = R2SessionManager.getSession(sessionId)
             ?: return createToolResult(false, error = "Invalid session_id: $sessionId")
 
@@ -1971,23 +2048,23 @@ object MCPServer {
             "all" -> "izz"
             else -> "iz"
         }
-        
+
         logInfo("列出字符串 (模式: $mode, 最小长度: $minLength, Session: ${sessionId.take(16)})")
-        
+
         // [补全功能 3]：使用 R2 原生配置进行过滤，防止内存爆炸
         R2Core.executeCommand(session.corePtr, "e bin.str.min=$minLength")
-        
+
         val rawOutput = R2Core.executeCommand(session.corePtr, command)
-        
+
         val cleanOutput = rawOutput.lineSequence()
             .filter { line ->
-                !line.contains(".eh_frame") && 
+                !line.contains(".eh_frame") &&
                 !line.contains(".gcc_except_table") &&
                 !line.contains(".text") &&
                 !line.contains("libunwind")
             }
             .filter { line ->
-                line.trim().length > 20 || 
+                line.trim().length > 20 ||
                 line.split("ascii", "utf8", "utf16", "utf32").lastOrNull()?.trim()?.length ?: 0 >= minLength
             }
             .joinToString("\n")
@@ -1995,41 +2072,40 @@ object MCPServer {
         val finalOutput = if (cleanOutput.isBlank()) {
             "No meaningful strings found (filters active: min_len=$minLength, exclude=.text/.eh_frame)"
         } else {
-            sanitizeOutput(cleanOutput, maxLines = 500, maxChars = 16000)
+            sanitizeOutput(cleanOutput, maxLines = maxLines, maxChars = maxChars)
         }
-        
+
         return createToolResult(true, output = finalOutput)
     }
 
     private suspend fun executeDecompileFunction(args: JsonObject): JsonElement {
-        val sessionId = args["session_id"]?.jsonPrimitive?.content
-            ?: return createToolResult(false, error = "Missing session_id")
-        val address = args["address"]?.jsonPrimitive?.content
-            ?: return createToolResult(false, error = "Missing address")
+    val sessionId = args["session_id"]?.jsonPrimitive?.content
+        ?: return createToolResult(false, error = "Missing session_id")
+    val address = args["address"]?.jsonPrimitive?.content
+        ?: return createToolResult(false, error = "Missing address")
 
-        val session = R2SessionManager.getSession(sessionId)
-            ?: return createToolResult(false, error = "Invalid session_id: $sessionId")
+    // 从参数或全局配置读取截断阈值
+    val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+    val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
 
-        val info = R2Core.executeCommand(session.corePtr, "afi @ $address")
-        val size = info.lines()
-            .find { it.trim().startsWith("size:") }
-            ?.substringAfter(":")
-            ?.trim()
-            ?.toLongOrNull() ?: 0
-                    
-        if (size > 10000) {
-            logInfo("函数过大 ($address, size: $size bytes)，跳过反编译")
-            return createToolResult(true, output = "⚠️ 函数过大 (Size: $size bytes)，反编译可能导致超时或不准确。\n\n建议先使用 r2_disassemble 查看局部汇编，或使用 r2_run_command 执行 'pdf @ $address' 查看函数结构。")
-        }
+    val session = R2SessionManager.getSession(sessionId)
+        ?: return createToolResult(false, error = "Invalid session_id: $sessionId")
 
-        logInfo("反编译函数: $address (size: $size bytes, Session: ${sessionId.take(16)})")
-        
-        val rawCode = R2Core.executeCommand(session.corePtr, "pdc @ $address")
-        
-        val result = sanitizeOutput(rawCode, maxLines = 500, maxChars = 15000)
-        
-        return createToolResult(true, output = result)
-    }
+    // 可选：记录函数大小（供调试用），但不再作为拒绝条件
+    val info = R2Core.executeCommand(session.corePtr, "afi @ $address")
+    val size = info.lines()
+        .find { it.trim().startsWith("size:") }
+        ?.substringAfter(":")
+        ?.trim()
+        ?.toLongOrNull() ?: 0
+    logInfo("反编译函数: $address (size: $size bytes)")
+
+    // 直接执行反编译，交由 sanitizeOutput 截断
+    val rawCode = R2Core.executeCommand(session.corePtr, "pdc @ $address")
+    val result = sanitizeOutput(rawCode, maxLines = maxLines, maxChars = maxChars)
+
+    return createToolResult(true, output = result)
+}
 
     private suspend fun executeDisassemble(args: JsonObject): JsonElement {
         val sessionId = args["session_id"]?.jsonPrimitive?.content
@@ -2076,12 +2152,14 @@ object MCPServer {
     private suspend fun executeGetXrefs(args: JsonObject): JsonElement {
         val sessionId = args["session_id"]?.jsonPrimitive?.content
             ?: return createToolResult(false, error = "Missing session_id")
-        
+
         val address = args["address"]?.jsonPrimitive?.content
             ?: return createToolResult(false, error = "Missing address")
-        
+
         val direction = args["direction"]?.jsonPrimitive?.content ?: "to"
-        val limit = args["limit"]?.jsonPrimitive?.intOrNull ?: 50
+        // 兼容旧 limit 参数，同时支持新的 max_lines 和 max_chars，优先使用全局配置
+        val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: args["limit"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+        val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
 
         val session = R2SessionManager.getSession(sessionId)
             ?: return createToolResult(false, error = "Invalid session_id: $sessionId")
@@ -2090,13 +2168,13 @@ object MCPServer {
             "from" -> "axf @ $address"
             else -> "axt @ $address"
         }
-        
-        logInfo("获取交叉引用 (地址: $address, 方向: $direction, 限制: $limit, Session: ${sessionId.take(16)})")
-        
+
+        logInfo("获取交叉引用 (地址: $address, 方向: $direction, 限制: $maxLines, Session: ${sessionId.take(16)})")
+
         val rawResult = R2Core.executeCommand(session.corePtr, command)
-        
-        val result = sanitizeOutput(rawResult, maxLines = limit, maxChars = 8000)
-        
+
+        val result = sanitizeOutput(rawResult, maxLines = maxLines, maxChars = maxChars)
+
         return createToolResult(true, output = result)
     }
 
@@ -2413,6 +2491,9 @@ object MCPServer {
         val query = args["query"]?.jsonPrimitive?.content
             ?: return createToolResult(false, error = "Missing query")
 
+        val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+        val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
+
         val safeQuery = query.replace("\"", "\\\"")
 
         val command = "sqlite3 -header -column \"$dbPath\" \"$safeQuery\""
@@ -2422,7 +2503,7 @@ object MCPServer {
         val result = ShellUtils.execCommand(command, isRoot = true)
 
         return if (result.isSuccess) {
-            val cleanOutput = sanitizeOutput(result.successMsg, maxLines = 1000, maxChars = 32000)
+            val cleanOutput = sanitizeOutput(result.successMsg, maxLines = maxLines, maxChars = maxChars)
             createToolResult(true, output = cleanOutput)
         } else {
             createToolResult(false, error = "SQL Error:\n${result.errorMsg}\n(Exit Code: Fail)")
@@ -2486,6 +2567,9 @@ object MCPServer {
         val cmd = args["command"]?.jsonPrimitive?.content ?: return createToolResult(false, error = "缺少命令参数")
         val useRoot = args["use_root"]?.jsonPrimitive?.booleanOrNull ?: false
 
+        val maxLines = args["max_lines"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxLines()
+        val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: R2AIConfig.getMaxChars()
+
         if (isDangerousCommand(cmd)) return createToolResult(false, error = "❌ 安全拦截: 检测到危险命令")
 
         // 1. 准备环境 (PATH, LD_LIBRARY_PATH)
@@ -2509,7 +2593,7 @@ object MCPServer {
         val result = ShellUtils.execCommand(finalCmd, isRoot = true)
 
         return if (result.isSuccess) {
-            createToolResult(true, output = sanitizeOutput(result.successMsg, maxLines = 1000))
+            createToolResult(true, output = sanitizeOutput(result.successMsg, maxLines = maxLines, maxChars = maxChars))
         } else {
             createToolResult(false, error = "Termux Error:\n${result.errorMsg}")
         }
