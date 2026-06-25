@@ -757,7 +757,7 @@ fun MainScreen(
                     style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = "⚠️ 超5万字符将显著增加Token消耗",
+                    text = "⚠️ 超5万字符将显著增加Token消耗，耗尽上下文窗口将导致对话中断。",
                     style = MaterialTheme.typography.bodySmall,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.error,
