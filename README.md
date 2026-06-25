@@ -1,12 +1,13 @@
 # Radare2 AI Bridge Android App
 
-将 Radare2 逆向引擎集成到 Android App，通过前台服务运行 Ktor HTTP 服务器，暴露 20 个核心 MCP 工具。
+将 Radare2 静态逆向引擎与 eDBG 动态调试器集成到 Android App，通过前台服务运行 Ktor HTTP 服务器，暴露 28 个 Radare2 MCP 工具 + eDBG 动态调试能力。
 
 ## 🎯 核心特性
 
-- ✅ **命令行集成**: 通过 JNI 包装 Radare2 CLI（避免复杂的头文件依赖）
+- ✅ **静态分析**: 通过 JNI 包装 Radare2 CLI（避免复杂的头文件依赖）
+- ✅ **动态调试**: 内置 eDBG 二进制，基于 eBPF 的 Android 动态调试器（端口 19810）
 - ✅ **前台服务**: 后台运行 Ktor HTTP 服务器 (端口 5050)
-- ✅ **MCP 协议**: JSON-RPC 2.0 实现，20 个 Radare2 + OS 工具
+- ✅ **MCP 协议**: JSON-RPC 2.0 实现，28 个 Radare2 + OS 工具
 - ✅ **并发管理**: 16 桶锁机制，支持多客户端
 - ✅ **Material 3 UI**: Jetpack Compose 现代界面
 - ✅ **零头文件依赖**: 简化的 CMake 配置
@@ -483,6 +484,44 @@ SQL 查询 (读取私有数据库)。
 **返回:**
 
 - JNI 方法列表
+
+## eDBG 动态调试
+
+内置 [eDBG](https://github.com/ShinoLeah/eDBG) 二进制文件，提供基于 eBPF 的 Android 动态调试能力。eDBG 不直接附加进程，具有抗干扰和反检测特性，几乎无法被目标程序感知。
+
+### 启动 eDBG
+
+在 App 主界面点击"启动eDBG"按钮（需 Root 权限），eDBG 将在后台启动 MCP 服务。
+
+- **端口**: 19810
+- **MCP 地址**: `http://127.0.0.1:19810/mcp`
+- **二进制路径**: `/data/data/com.r2aibridge/files/eDBG`（从 assets 自动释放）
+
+### 主要功能
+
+- 进程附加 (`attach`) 与运行 (`run`)
+- 断点设置：普通断点、硬件断点、观察点 (watch/rwatch)
+- 执行控制：continue、step、next、finish、until
+- 内存查看 (`examine`) 与写入 (`write_memory`)
+- 寄存器查看、栈回溯、线程控制
+- 反汇编查看 (`list`)
+
+### 与 R2 配合使用
+
+R2AIBridge 提供两个独立的 MCP 服务，可在 AI 客户端中同时配置：
+
+| 服务 | 端口 | 能力 |
+|------|------|------|
+| R2 MCP | 5050 | 静态分析（反编译、字符串、交叉引用等） |
+| eDBG MCP | 19810 | 动态调试（断点、内存、寄存器等） |
+
+静态分析 + 动态调试结合，可以实现更强大的逆向分析工作流。
+
+### 要求
+
+- ARM64 Android 设备
+- Root 权限（推荐 KernelSU）
+- 内核版本 5.10+（eBPF 支持）
 
 ## API 端点
 
