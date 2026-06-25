@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.r2aibridge.mcp.MCPServer
@@ -379,13 +380,38 @@ fun MainScreen(
     val localhostUrl = "http://127.0.0.1:5050/mcp"
     val wifiUrl = if (wifiIp != "未连接WiFi") "http://$wifiIp:5050/mcp" else null
 
+    val edbgLocalhostUrl = ShellUtils.EDBG.getLocalhostUrl()
+    val edbgWifiUrl = if (wifiIp != "未连接WiFi") ShellUtils.EDBG.getWifiUrl(wifiIp) else null
+    var isEdbgRunning by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+
+    fun refreshEdbgStatus() {
+        scope.launch(Dispatchers.IO) {
+            val running = ShellUtils.EDBG.isRunning()
+            withContext(Dispatchers.Main) {
+                isEdbgRunning = running
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        refreshEdbgStatus()
+        while (true) {
+            delay(3000)
+            refreshEdbgStatus()
+        }
+    }
+
+    val scrollState = rememberScrollState()
+
     // 点击空白处清除焦点
     Column(
         modifier = Modifier
             .fillMaxSize()
             .statusBarsPadding()
             .navigationBarsPadding()
-            .padding(16.dp)
+            .padding(12.dp)
+            .verticalScroll(scrollState)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -396,28 +422,28 @@ fun MainScreen(
         // Title
         Text(
             text = "Radare2 AI Bridge",
-            style = MaterialTheme.typography.headlineMedium,
-            modifier = Modifier.padding(bottom = 8.dp)
+            style = MaterialTheme.typography.titleLarge,
+            modifier = Modifier.padding(bottom = 4.dp)
         )
         
         // Telegram Group Link
         Text(
             text = "Telegram群: t.me/MuortVIP",
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.primary,
             modifier = Modifier
                 .clickable {
                     val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/MuortVIP"))
                     context.startActivity(intent)
                 }
-                .padding(bottom = 16.dp)
+                .padding(bottom = 8.dp)
         )
 
         // Service Status Card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
+                .padding(vertical = 3.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (isServiceRunning) 
                     Color(0xFF4CAF50) 
@@ -426,23 +452,23 @@ fun MainScreen(
             )
         ) {
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(12.dp)
             ) {
                 Text(
-                    text = if (isServiceRunning) "服务运行中" else "服务已停止",
-                    style = MaterialTheme.typography.titleMedium,
+                    text = if (isServiceRunning) "R2 MCP: 运行中" else "R2 MCP: 已停止",
+                    style = MaterialTheme.typography.titleSmall,
                     color = Color.White
                 )
                 
                 if (isServiceRunning) {
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = "端口: 5050",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = Color.White
                     )
                     
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
                     
                     // 本地地址
                     Row(
@@ -453,11 +479,12 @@ fun MainScreen(
                             Text(
                                 text = "本地地址:",
                                 style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
                                 color = Color.White.copy(alpha = 0.8f)
                             )
                             Text(
                                 text = localhostUrl,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
                                 color = Color.White
                             )
@@ -467,16 +494,16 @@ fun MainScreen(
                                 val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                 val clip = ClipData.newPlainText("MCP URL", localhostUrl)
                                 clipboard.setPrimaryClip(clip)
-                                Toast.makeText(context, "已复制: $localhostUrl", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
                             },
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(32.dp),
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("📋", style = MaterialTheme.typography.bodyLarge)
+                            Text("📋", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                     
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     
                     // WiFi 地址
                     Row(
@@ -487,11 +514,12 @@ fun MainScreen(
                             Text(
                                 text = "WiFi地址:",
                                 style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
                                 color = Color.White.copy(alpha = 0.8f)
                             )
                             Text(
                                 text = wifiUrl ?: wifiIp,
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall,
                                 fontFamily = FontFamily.Monospace,
                                 color = Color.White
                             )
@@ -502,37 +530,38 @@ fun MainScreen(
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     val clip = ClipData.newPlainText("MCP URL", wifiUrl)
                                     clipboard.setPrimaryClip(clip)
-                                    Toast.makeText(context, "已复制: $wifiUrl", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "WiFi未连接", Toast.LENGTH_SHORT).show()
                                 }
                             },
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.size(32.dp),
                             contentPadding = PaddingValues(0.dp)
                         ) {
-                            Text("📋", style = MaterialTheme.typography.bodyLarge)
+                            Text("📋", style = MaterialTheme.typography.bodyMedium)
                         }
                     }
                 }
             }
         }
 
-        // Control Buttons
+        // R2 Control Buttons
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Button(
                 onClick = {
                     onStartService()
                     isServiceRunning = true
                 },
-                modifier = Modifier.weight(1f),
-                enabled = !isServiceRunning
+                modifier = Modifier.weight(1f).height(36.dp),
+                enabled = !isServiceRunning,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
             ) {
-                Text("启动服务")
+                Text("启动R2", style = MaterialTheme.typography.bodySmall)
             }
 
             Button(
@@ -541,13 +570,176 @@ fun MainScreen(
                     isServiceRunning = false
                     commandHistory.add(0, formatLogcatMessage("I", "R2AI", "⛔ 服务已停止"))
                 },
-                modifier = Modifier.weight(1f),
+                modifier = Modifier.weight(1f).height(36.dp),
                 enabled = isServiceRunning,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.error
-                )
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
             ) {
-                Text("停止服务")
+                Text("停止R2", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        // eDBG Status Card
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 3.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isEdbgRunning)
+                    Color(0xFF2196F3)
+                else
+                    Color(0xFF9E9E9E)
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(12.dp)
+            ) {
+                Text(
+                    text = "eDBG MCP: ${if (isEdbgRunning) "运行中" else "已停止"}",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = Color.White
+                )
+
+                if (isEdbgRunning) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "端口: ${ShellUtils.EDBG.getPort()}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White
+                    )
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    // 本地地址
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "本地地址:",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                text = edbgLocalhostUrl,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color.White
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                val clip = ClipData.newPlainText("eDBG MCP URL", edbgLocalhostUrl)
+                                clipboard.setPrimaryClip(clip)
+                                Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(32.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("📋", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    // WiFi 地址
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "WiFi地址:",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontSize = 11.sp,
+                                color = Color.White.copy(alpha = 0.8f)
+                            )
+                            Text(
+                                text = edbgWifiUrl ?: wifiIp,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = Color.White
+                            )
+                        }
+                        Button(
+                            onClick = {
+                                if (edbgWifiUrl != null) {
+                                    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    val clip = ClipData.newPlainText("eDBG MCP URL", edbgWifiUrl)
+                                    clipboard.setPrimaryClip(clip)
+                                    Toast.makeText(context, "已复制", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "WiFi未连接", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            modifier = Modifier.size(32.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("📋", style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                } else {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "点击下方按钮启动eDBG动态调试（⚠️ 需 Root 权限）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color.White.copy(alpha = 0.8f)
+                    )
+                }
+            }
+        }
+
+        // eDBG Control Buttons
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Button(
+                onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        val success = ShellUtils.EDBG.start(context)
+                        withContext(Dispatchers.Main) {
+                            if (success) {
+                                Toast.makeText(context, "eDBG 启动中...", Toast.LENGTH_SHORT).show()
+                            } else {
+                                Toast.makeText(context, "eDBG 启动失败，请检查 Root 权限", Toast.LENGTH_LONG).show()
+                            }
+                            refreshEdbgStatus()
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f).height(36.dp),
+                enabled = !isEdbgRunning,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text("启动eDBG", style = MaterialTheme.typography.bodySmall)
+            }
+
+            Button(
+                onClick = {
+                    scope.launch(Dispatchers.IO) {
+                        ShellUtils.EDBG.stop()
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(context, "eDBG 已停止", Toast.LENGTH_SHORT).show()
+                            refreshEdbgStatus()
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f).height(36.dp),
+                enabled = isEdbgRunning,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+            ) {
+                Text("停止eDBG", style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -555,20 +747,21 @@ fun MainScreen(
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp)
+                .padding(vertical = 3.dp)
         ) {
             Column(
-                modifier = Modifier.padding(16.dp)
+                modifier = Modifier.padding(12.dp)
             ) {
                 Text(
                     text = "输出配置",
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.titleSmall
                 )
                 Text(
-                    text = "⚠️超过5万字符将显著增加Token消耗，耗尽上下文无法继续对话。",
+                    text = "⚠️ 超5万字符将显著增加Token消耗",
                     style = MaterialTheme.typography.bodySmall,
+                    fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 4.dp)
                 )
 
                 var maxLinesText by remember { mutableStateOf(R2AIConfig.getMaxLines().toString()) }
@@ -576,26 +769,28 @@ fun MainScreen(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedTextField(
                         value = maxLinesText,
                         onValueChange = { maxLinesText = it.filter { c -> c.isDigit() } },
-                        label = { Text("最大行数") },
+                        label = { Text("最大行数", style = MaterialTheme.typography.bodySmall) },
                         modifier = Modifier.weight(1f),
-                        singleLine = true
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodySmall
                     )
                     OutlinedTextField(
                         value = maxCharsText,
                         onValueChange = { maxCharsText = it.filter { c -> c.isDigit() } },
-                        label = { Text("最大字符数") },
+                        label = { Text("最大字符数", style = MaterialTheme.typography.bodySmall) },
                         modifier = Modifier.weight(1f),
-                        singleLine = true
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodySmall
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 Button(
                     onClick = {
@@ -603,138 +798,42 @@ fun MainScreen(
                         val chars = maxCharsText.toIntOrNull() ?: 24000
                         R2AIConfig.setMaxLines(lines)
                         R2AIConfig.setMaxChars(chars)
-                        // 清除焦点并隐藏键盘
                         focusManager.clearFocus()
                         val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
                         imm.hideSoftInputFromWindow(view.windowToken, 0)
-                        Toast.makeText(context, "已保存 (行数: $lines, 字符数: $chars)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "已保存", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                 ) {
-                    Text("保存配置")
-                }
-            }
-        }
-
-        // MCP Tools Info
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp)
-            ) {
-                var isToolsExpanded by remember { mutableStateOf(false) }
-                
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { isToolsExpanded = !isToolsExpanded },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "可用的 MCP 工具 (28个)",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(
-                        onClick = { isToolsExpanded = !isToolsExpanded },
-                        modifier = Modifier.size(24.dp)
-                    ) {
-                        Text(
-                            text = if (isToolsExpanded) "▼" else "▶",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                    }
-                }
-                
-                if (isToolsExpanded) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    val tools = listOf(
-                        "🚪 r2_open_file - 打开文件 (默认 a 基础分析)",
-                        "⚡ r2_analyze_file - 深度分析 (aaa, 耗时较长)",
-                        "🎯 r2_analyze_target - 智能分析策略 (精准下刀)",
-                        "⚙️ r2_run_command - 执行 R2 命令 (通用)",
-                        "⚙️ r2_config_manager - 配置管理 (动态调整分析参数)",
-                        "🔧 r2_analysis_hints - 分析提示 (手动修正分析错误)",
-                        "📝 r2_list_functions - 列出函数列表",
-                        "📝 r2_list_strings - 列出字符串 (逆向第一步)",
-                        "🔗 r2_get_xrefs - 获取交叉引用 (逻辑追踪)",
-                        "🔗 r2_manage_xrefs - 管理交叉引用 (手动修复)",
-                        "ℹ️ r2_get_info - 获取文件详细信息",
-                        "🔍 r2_decompile_function - 反编译函数",
-                        "📜 r2_disassemble - 反汇编代码",
-                        "🧪 r2_test - 测试 R2 库状态 (诊断)",
-                        "🔒 r2_close_session - 关闭会话",
-                        "📁 os_list_dir - 列出目录内容 (支持 Root)",
-                        "📄 os_read_file - 读取文件内容 (支持 Root)",
-                        "💻 termux_command - Termux 环境命令 (AI 沙盒)",
-                        "💾 termux_save_script - 保存代码 (赋权/所有者)",
-                        "🗄️ sqlite_query - SQL 查询 (读取私有数据库)",
-                        "📝 read_logcat - 读取 Android 系统日志 (Logcat)",
-                        "🏷️ rename_function - 智能重命名函数 (语义理解)",
-                        "🧪 simulate_execution - 模拟执行 (ESIL 沙箱)",
-                        "📝 add_knowledge_note - 持久化知识库 (记录重要发现)",
-                        "🔐 batch_decrypt_strings - 批量解密字符串对抗混淆",
-                        "🔍 scan_crypto_signatures - 扫描加密签名识别算法",
-                        "🔨 apply_hex_patch - 对指定地址应用二进制 Patch",
-                        "🔍 find_jni_methods - 列出所有的 JNI 接口函数"
-                    )
-                    
-                    // 添加滚动功能，防止界面溢出
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 300.dp) // 设置最大高度
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        Column {
-                            tools.forEach { tool ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                            val clip = ClipData.newPlainText("MCP Tool", tool)
-                                            clipboard.setPrimaryClip(clip)
-                                            Toast.makeText(context, "已复制工具信息", Toast.LENGTH_SHORT).show()
-                                        }
-                                        .padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "• $tool",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                    Text(
-                                        text = "📋",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        modifier = Modifier.padding(start = 8.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    Text("保存配置", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
 
         // Real R2AI Logcat
+        var isLogExpanded by remember { mutableStateOf(true) }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 8.dp),
+                .padding(top = 6.dp, bottom = 2.dp)
+                .clickable { isLogExpanded = !isLogExpanded },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Text(
-                text = "R2AI LOGCAT记录 (${realLogcatHistory.size})",
-                style = MaterialTheme.typography.titleMedium
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (isLogExpanded) "▼" else "▶",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+                Text(
+                    text = "日志 (${realLogcatHistory.size})",
+                    style = MaterialTheme.typography.titleSmall
+                )
+            }
             Row(
                 modifier = Modifier,
                 horizontalArrangement = Arrangement.Center,
@@ -747,38 +846,39 @@ fun MainScreen(
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             val clip = ClipData.newPlainText("R2AI Logs", allLogs)
                             clipboard.setPrimaryClip(clip)
-                            Toast.makeText(context, "已复制全部日志 (${realLogcatHistory.size}行)", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "已复制全部日志", Toast.LENGTH_SHORT).show()
                         } else {
-                            Toast.makeText(context, "无日志可复制", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "无日志", Toast.LENGTH_SHORT).show()
                         }
                     },
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Text(
                         text = "📋",
-                        style = MaterialTheme.typography.bodyLarge
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                Spacer(modifier = Modifier.width(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 IconButton(
                     onClick = {
                         realLogcatHistory.clear()
-                        Toast.makeText(context, "已清除所有日志", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "已清除", Toast.LENGTH_SHORT).show()
                     },
-                    modifier = Modifier.size(32.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Text(
                         text = "🗑️",
-                        style = MaterialTheme.typography.bodyLarge
+                        style = MaterialTheme.typography.bodyMedium
                     )
                 }
             }
         }
         
+        if (isLogExpanded) {
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f) // 使用剩余空间
+                .height(500.dp)
         ) {
             // 自动滚动到最新日志
             LaunchedEffect(realLogcatHistory.size) {
@@ -834,6 +934,7 @@ fun MainScreen(
                     )
                 }
             }
+        }
         }
     }
 }
