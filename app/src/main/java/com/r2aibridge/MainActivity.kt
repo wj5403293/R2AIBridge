@@ -935,6 +935,60 @@ fun MainScreen(
                 }
             }
         }
+        } else {
+            // 折叠状态下显示相关链接
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp)
+                ) {
+                    Text(
+                        text = "项目链接",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier.padding(bottom = 6.dp)
+                    )
+
+                    val links = listOf(
+                        "R2AIBridge" to "https://github.com/muort521/R2AIBridge",
+                        "Radare2" to "https://github.com/radareorg/radare2",
+                        "eDBG" to "https://github.com/ShinoLeah/eDBG",
+                        "MCP Protocol" to "https://modelcontextprotocol.io/"
+                    )
+
+                    links.forEach { (name, url) ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    context.startActivity(intent)
+                                }
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "🔗",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(end = 6.dp)
+                            )
+                            Text(
+                                text = name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Text(
+                                text = "→",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
